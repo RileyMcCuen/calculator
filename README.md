@@ -19,10 +19,17 @@ Starts an interactive calculator session that (depending on terminal implementat
 Will contintue evaluating expressions until the keyword 'exit' is entered, in which case the calculator program exits
 Can use variables to save past calculations.
 
+example of session
 ```
+# start the calculator
 calculator
+
+# input
 1+2
+
+#output
 =3
+
 x=5
 =5
 x
