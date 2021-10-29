@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -29,7 +28,7 @@ func (e Evaluator) Eval(input string) string {
 		return err.Error()
 	}
 
-	return fmt.Sprintf("=%f", val)
+	return fmt.Sprintf("= %f", val)
 }
 
 func (e Evaluator) String() string {
@@ -43,22 +42,28 @@ func (e Evaluator) String() string {
 
 func (e Evaluator) PrettyString() string {
 	b := strings.Builder{}
-	b.WriteString("Values:")
+	b.WriteString("Values:\n")
 	for k, v := range e {
-		b.WriteString(fmt.Sprintf(" %s=%f\n", k, v))
+		b.WriteString(fmt.Sprintf(" %s = %f\n", k, v))
 	}
+
 	return b.String()
 }
 
 func main() {
-	// check for one shot mode
-	input := flag.String("e", "", "put a raw expression here, if an argument is supplied an interactive session will not be started")
-	flag.Parse()
-
 	e := NewEvaluator()
 
-	if *input != "" {
-		fmt.Println(e.Eval(*input))
+	// check for one shot mode
+	if len(os.Args) > 1 {
+		maxLen := 0
+		for _, arg := range os.Args[1:] {
+			if argL := len(arg); argL > maxLen {
+				maxLen = argL
+			}
+		}
+		for _, arg := range os.Args[1:] {
+			fmt.Printf("%-*s %s\n", maxLen, arg, e.Eval(arg))
+		}
 		return
 	}
 

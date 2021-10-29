@@ -36,3 +36,7 @@ func (t Token) String() string {
 	}
 	return fmt.Sprintf("%s : %d", t.val, t.t)
 }
+
+func (t Token) Terminal() bool {
+	return t.t == EOFTok || t.t == ErrTok || t.t == RightParen
+}

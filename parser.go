@@ -14,6 +14,7 @@ type (
 		String() string
 	}
 	Value    string
+	Constant float64
 	Operator byte
 	Var      struct {
 		name   string
@@ -30,10 +31,9 @@ type (
 		node   Node
 		values map[string]float64
 	}
-
 	Parser struct {
 		in     chan Token
-		cur    Token
+		tokens *TokenList
 		values map[string]float64
 	}
 )
@@ -54,7 +54,7 @@ var (
 func NewParser(c chan Token, values map[string]float64) *Parser {
 	return &Parser{
 		c,
-		<-c,
+		NewTokenList(),
 		values,
 	}
 }
@@ -67,17 +67,33 @@ func (p *Parser) Parse() (Node, error) {
 	return root, nil
 }
 
-func (p *Parser) next() *Parser {
-	p.cur = <-p.in
+func (p *Parser) peek() Token {
+	if !p.tokens.Empty() {
+		return p.tokens.Peek()
+	}
+
+	return p.tokens.Push(<-p.in).Peek()
+}
+
+func (p *Parser) take() Token {
+	if !p.tokens.Empty() {
+		return p.tokens.Poll()
+	}
+	return <-p.in
+}
+
+func (p *Parser) put(toks ...Token) *Parser {
+	for _, tok := range toks {
+		p.tokens.Push(tok)
+	}
 	return p
 }
 
 func (p *Parser) match(ts ...TokenType) error {
 	for _, t := range ts {
-		if p.cur.t == t {
-			p.next()
-		} else {
-			return errors.New("unexpected token: [" + p.cur.val + "]")
+		if cur := p.take(); cur.t != t {
+			p.tokens.Push(cur)
+			return errors.New("unexpected token: [" + cur.val + "]")
 		}
 	}
 	return nil
@@ -85,51 +101,42 @@ func (p *Parser) match(ts ...TokenType) error {
 
 func (p *Parser) optionalAssignment() (Node, error) {
 	// <variable> <=> <expression> | <expression>
+	firstToken := p.take()
 
-	if firstToken := p.cur; firstToken.t == Variable {
+	if firstToken.t == Variable {
 		// might be an assignment
 
+		secondToken := p.take()
+
 		switch {
-		case p.next().cur.t == Equal:
+		case secondToken.t == Equal:
 			// this is an assignment
 
-			val, err := p.next().expression()
+			if firstToken.val == "e" || firstToken.val == "pi" {
+				return nil, errors.New("cannot use 'e' or 'pi' as variable names, they are reserved for important constants")
+			}
+
+			val, err := p.parenthetic()
 			if err != nil {
 				return nil, err
 			}
 
 			return MapEvaluator{firstToken.val, val, p.values}, nil
 
-		case p.cur.t == EOFTok:
-			return Var{firstToken.val, p.values}, nil
-
-		case p.cur.t == ErrTok:
-			return nil, fmt.Errorf("encountered an invalid sequence in the input: '%s'", p.cur.val)
-
 		default:
-			// essentially same as parsing parenthetic expression, but we already pulled out the first token and cannot put it back
-			nl, err := p.parenthetic(Var{firstToken.val, p.values})
-			if err != nil {
-				return nil, err
-			}
-
-			return nl.pemdas()
+			p.put(secondToken)
 
 		}
-	} else {
-		// not an assignment, treat as regular expression
-		return p.parenthetic()
 	}
+
+	// not an assignment
+	return p.put(firstToken).parenthetic()
 }
 
-func (p *Parser) parenthetic(nodes ...Node) (*NodeList, error) {
+func (p *Parser) parenthetic() (*NodeList, error) {
 	nl := &NodeList{}
 
-	for _, node := range nodes {
-		nl.Append(node)
-	}
-
-	for i := len(nodes); p.cur.t != EOFTok && p.cur.t != ErrTok && p.cur.t != RightParen; i++ {
+	for i, tok := 0, p.peek(); !tok.Terminal(); i, tok = i+1, p.peek() {
 		if i%2 == 0 {
 			node, err := p.expression()
 			if err != nil {
@@ -148,12 +155,11 @@ func (p *Parser) parenthetic(nodes ...Node) (*NodeList, error) {
 		}
 	}
 
-	if p.cur.t == ErrTok {
-		return nil, fmt.Errorf("encountered an invalid sequence in the input: '%s'", p.cur.val)
+	if tok := p.peek(); tok.t == ErrTok {
+		return nil, fmt.Errorf("encountered an invalid sequence in the input: '%s'", tok.val)
 	} else if len(nl.nodes) == 0 {
 		return nil, errors.New("nodelist has no elements, therefore an invalid top level or parenthetic expression has been encountered")
 	} else if _, err := nl.nodes[len(nl.nodes)-1].Operator(); err == nil || len(nl.nodes)%2 == 0 {
-		fmt.Println(nl)
 		return nil, errors.New("nodelist ended in an operator, but must end in an expression to be valid: " + err.Error())
 	}
 
@@ -162,10 +168,8 @@ func (p *Parser) parenthetic(nodes ...Node) (*NodeList, error) {
 
 func (p *Parser) expression() (Node, error) {
 	// ( <expression> ) | variable | number
-	switch token := p.cur; token.t {
+	switch tok := p.take(); tok.t {
 	case LeftParen:
-		p.next()
-
 		nl, err := p.parenthetic()
 		if err != nil {
 			return nil, err
@@ -178,29 +182,46 @@ func (p *Parser) expression() (Node, error) {
 		return nl.pemdas()
 
 	case Variable:
-		p.next()
-		return Var{token.val, p.values}, nil
+		switch tok.val {
+		case "e":
+			return Constant(2.7182818), nil
+		case "pi":
+			return Constant(3.1415927), nil
+		default:
+			return Var{tok.val, p.values}, nil
+		}
 
 	case Number:
-		p.next()
-		return Value(token.val), nil
+		return Value(tok.val), nil
 
 	default:
-		return nil, fmt.Errorf("invalid token '%c' found when parsing expression", token.t)
-
+		p.put(tok)
+		return nil, fmt.Errorf("invalid token '%c' found when parsing expression", tok.t)
 	}
 }
 
 func (p *Parser) operator() (Node, error) {
 	// + | - | * | / | ^
-	node, err := Op(p.cur.t)
+
+	node, err := Op(p.peek().t)
 	if err != nil {
 		return nil, err
 	}
 
-	p.next()
-
+	p.take()
 	return node, nil
+}
+
+func (c Constant) String() string {
+	return strconv.FormatFloat(float64(c), 'G', -1, 64)
+}
+
+func (c Constant) Eval() (float64, error) {
+	return float64(c), nil
+}
+
+func (Constant) Operator() (Operator, error) {
+	return NilOp, errors.New("Constant cannot be used as an operator")
 }
 
 func (v Value) String() string {
@@ -215,14 +236,7 @@ func (v Value) String() string {
 }
 
 func (v Value) Eval() (float64, error) {
-	switch TokenType(v[0]) {
-	case 'p':
-		return 3.1415927, nil
-	case 'e':
-		return 2.7182818, nil
-	default:
-		return strconv.ParseFloat(string(v), 64)
-	}
+	return strconv.ParseFloat(string(v), 64)
 }
 
 func (Value) Operator() (Operator, error) {
