@@ -9,12 +9,15 @@ The calculator has two modes:
 
 ## Evaluate Expression
 
-Evaluates the single expression specified by flag "e" and prints the value out.
+Evaluates any expressions specified as args to the calculator. Variables defined in earlier expressions can be used in later expressions.
 
-example: `calculator -e "1+2^.5/6"`
+example: `calculator "1+2^.5/6"`
+
+example: `calculator "x=1+2^.5/6" "x+10.2"`
 
 ## Interactive
 
+If there are no extra arguments interactive mode is started.
 Starts an interactive calculator session that (depending on terminal implementation) allows you to cycle through your past expressions.
 Will contintue evaluating expressions until the keyword 'exit' is entered, in which case the calculator program exits
 Can use variables to save past calculations.
